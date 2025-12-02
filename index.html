@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>Code Nexus</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    
+    <style>
+        /* === 樣式保持 v12.0 的固定版面設計 (不贅述 CSS 細節以節省篇幅，完全沿用) === */
+        :root { --bg-color: #050505; --panel-bg: #101010; --accent: #00ff9d; --accent-dim: #005533; --danger: #ff3333; --warning: #ffcc00; --text: #e0e0e0; --border: #333; }
+        body { background: var(--bg-color); color: var(--text); font-family: 'Microsoft JhengHei', sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; }
+        
+        .panel-left { width: 320px; min-width: 320px; background: var(--panel-bg); border-right: 1px solid var(--border); padding: 15px; display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; }
+        .cam-box { flex: 0 0 200px; background: #000; border: 2px solid var(--accent); border-radius: 6px; overflow: hidden; position: relative; margin-bottom: 10px; }
+        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        .status-box { flex: 0 0 auto; background: #1a1a1a; padding: 10px; margin-bottom: 10px; border-radius: 6px; border: 1px solid #333; font-size: 0.9em; }
+        .metric-row { display: flex; justify-content: space-between; margin-bottom: 5px; }
+        .val { font-weight: bold; color: var(--accent); }
+        .stress-bar-bg { height: 6px; background: #333; border-radius: 3px; margin-top: 5px; overflow: hidden; }
+        .stress-bar { height: 100%; width: 0%; background: var(--accent); transition: width 0.5s; }
+        .log-header { flex: 0 0 auto; font-size: 0.8em; color: #666; margin-bottom: 5px; }
+        #log-box { flex: 1 1 auto; background: #000; padding: 5px; font-family: monospace; font-size: 0.75em; color: #888; overflow-y: auto; border: 1px solid #333; }
+        .log-entry { margin-bottom: 2px; border-bottom: 1px solid #222; padding-bottom: 2px; }
+
+        .panel-right { flex: 1; display: flex; flex-direction: column; padding: 20px; height: 100vh; box-sizing: border-box; overflow: hidden; }
+        .nav-tabs { display: flex; gap: 10px; margin-bottom: 15px; flex: 0 0 auto; }
+        .tab-btn { background: #222; border: 1px solid #444; color: #aaa; padding: 8px 15px; cursor: pointer; border-radius: 4px; transition: 0.3s; }
+        .tab-btn.active { background: var(--accent-dim); color: white; border-color: var(--accent); }
+        .content-area { display: none; flex-direction: column; flex: 1 1 auto; overflow-y: auto; padding-right: 5px; margin-bottom: 10px; }
+        .content-area.active { display: flex; }
+
+        input, textarea, select { width: 100%; background: #1a1a1a; border: 1px solid #333; color: white; padding: 10px; border-radius: 4px; box-sizing: border-box; margin-bottom: 10px; }
+        textarea { resize: vertical; font-family: monospace; }
+        .editor-container { flex: 0 0 250px; display: flex; flex-direction: column; border: 1px solid #333; border-radius: 6px; overflow: hidden; margin-bottom: 10px; }
+        #code-editor { flex: 1; background: #0c0c0c; color: #ddd; padding: 15px; border:none; outline:none; font-family: 'Consolas', monospace; resize:none; font-size: 14px; }
+        #output { height: 100px; background: #000; color: #aaa; padding: 10px; font-family: monospace; border-top: 1px solid #333; overflow-y: auto; white-space: pre-wrap; }
+        .btn-action { background: var(--accent-dim); color: white; border: 1px solid var(--accent); padding: 8px 20px; cursor: pointer; border-radius: 4px; flex: 0 0 auto; }
+        .btn-action:hover { background: var(--accent); color: black; }
+
+        .score-table { width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }
+        .score-table td, .score-table th { border: 1px solid #333; padding: 8px; text-align: center; vertical-align: middle; }
+        .score-table th { background: #222; color: var(--accent); width: 20%; }
+        .score-table td.comment-cell { text-align: left; vertical-align: top; white-space: pre-wrap; height: 80px;}
+
+        #chat-panel { flex: 0 0 200px; border-top: 1px solid #333; background: #080808; display: flex; flex-direction: column; padding: 10px; }
+        #chat-msgs { flex: 1; overflow-y: auto; margin-bottom: 10px; min-height: 0; }
+        .msg { padding: 8px 12px; margin-bottom: 5px; border-radius: 4px; font-size: 0.9em; max-width: 90%; word-wrap: break-word; }
+        .msg.ai { color: var(--accent); background: #112211; border-left: 3px solid var(--accent); align-self: flex-start; }
+        .msg.user { color: #fff; background: #004455; align-self: flex-end; }
+        .typing-cursor::after { content: '▋'; animation: blink 1s infinite; color: var(--accent); }
+        @keyframes blink { 0%, 100% {opacity: 1;} 50% {opacity: 0;} }
+
+        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(5,5,5,0.95); z-index: 1000; display: none; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+        #face-lock-overlay { backdrop-filter: blur(10px); background: rgba(0,0,0,0.85); z-index: 3000; }
+        .lock-icon { font-size: 50px; margin-bottom: 20px; animation: pulse 1s infinite; }
+        @keyframes pulse { 0% {transform: scale(1);} 50% {transform: scale(1.1);} 100% {transform: scale(1);} }
+        .login-box { width: 350px; padding: 40px; border: 1px solid var(--accent); border-radius: 10px; background: #111; }
+    </style>
+</head>
+<body>
+
+    <!-- 登入層 -->
+    <div id="login-overlay" class="overlay" style="display:flex;">
+        <div class="login-box">
+            <h2 style="color:var(--accent);">CODE NEXUS</h2>
+            <p style="color:#888;">請輸入學號啟動系統</p>
+            <input type="text" id="student-id-input" placeholder="學號" style="text-align:center;">
+            <button class="btn-action" onclick="loginSystem()" style="width:100%;">啟動系統 ▶</button>
+        </div>
+    </div>
+
+    <!-- 坐姿鎖定層 -->
+    <div id="face-lock-overlay" class="overlay">
+        <div class="lock-icon">⚠️</div>
+        <h2 style="color:var(--warning);">系統暫停</h2>
+        <p style="color:#ccc;">偵測不到臉部，請回到座位。</p>
+    </div>
+
+    <!-- 治療模式層 -->
+    <div id="therapy-overlay" class="overlay">
+        <h2 style="color:var(--danger)">⚠️ 壓力過載</h2>
+        <p>系統偵測到過高壓力指數。請稍作休息。</p>
+        <div id="therapy-text" style="color:#fff; margin:20px 0; font-size:1.2em;">載入安撫訊息中...</div>
+        <button class="btn-action" id="btn-resume" onclick="stopTherapy()" style="opacity:0;">我冷靜好了 ▶</button>
+    </div>
+
+    <!-- 左側面板 -->
+    <div class="panel-left">
+        <div class="header">NEXUS v13.0</div>
+        <div id="display-student-id" style="text-align:center; color:#888; margin-bottom:10px;">未登入</div>
+        <div class="cam-box"><video id="video" autoplay muted playsinline></video></div>
+        <div class="status-box">
+            <div class="metric-row"><span>情緒:</span> <span id="emo-val" class="val">--</span></div>
+            <div class="metric-row"><span>狀態:</span> <span id="act-val" class="val" style="color:gray">正常</span></div>
+            <div style="margin-top:5px; font-size:0.8em; color:gray;">壓力指數 (Stress)</div>
+            <div class="stress-bar-bg"><div id="stress-bar" class="stress-bar"></div></div>
+        </div>
+        <div class="log-header">系統日誌</div>
+        <div id="log-box"></div>
+    </div>
+
+    <!-- 右側面板 -->
+    <div class="panel-right">
+        <div class="nav-tabs">
+            <button class="tab-btn active" onclick="switchPhase('learning')">1. 學習 (LN)</button>
+            <button class="tab-btn" onclick="switchPhase('posing')">2. 擬題 (PP)</button>
+            <button class="tab-btn" onclick="switchPhase('human-review')">3. 評同儕 (HR)</button>
+            <button class="tab-btn" onclick="switchPhase('ai-review')">4. AI 評我 (PA)</button>
+            <button class="tab-btn" onclick="switchPhase('reflection')">5. 反思 (RF)</button>
+        </div>
+
+        <!-- 學習區 -->
+        <div id="phase-learning" class="content-area active">
+            <div style="background:#151515; padding:20px; border-radius:8px; border-left:4px solid var(--accent);">
+                <h2>📝 單元：Python 條件判斷</h2>
+                <p>請閱讀以下教材：</p>
+                <pre style="background:#222; padding:10px; color:#aaa;">score = 80
+if score >= 60:
+    print("Pass")
+else:
+    print("Fail")</pre>
+                <button class="btn-action" onclick="finishLearning()">✅ 閱讀完畢</button>
+            </div>
+        </div>
+
+        <!-- 擬題區 -->
+        <div id="phase-posing" class="content-area">
+            <label>題目名稱</label><input id="pp-title" placeholder="例如：判斷奇偶數">
+            <label>題目敘述</label><textarea id="pp-desc" style="height:80px;"></textarea>
+            <label>參考解答代碼 & 測試</label>
+            <div class="editor-container">
+                <textarea id="code-editor" placeholder="# Python 代碼...">print("Hello")</textarea>
+                <div id="output">等待執行...</div>
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-top:10px;">
+                 <button class="btn-action" style="background:#444;" onclick="runPython()">▶ 執行代碼</button>
+                 <button class="btn-action" onclick="finishPosing()">暫存並下一步 ➡</button>
+            </div>
+        </div>
+
+        <!-- 評同儕區 -->
+        <div id="phase-human-review" class="content-area">
+            <h3>👥 評分其他同學的題目</h3>
+            <button class="btn-action" onclick="loadPeerProblem()" style="background:#444; margin-bottom:15px;">📥 載入同儕挑戰</button>
+            <div id="human-review-area" style="display:none; border:1px solid #333; padding:15px; border-radius:6px;">
+                <h4 id="hr-title" style="color:var(--accent); margin-top:0;"></h4>
+                <p id="hr-desc" style="color:#aaa; background:#111; padding:10px; border-radius:4px;"></p>
+                <pre id="hr-code" style="background:#222; padding:10px; overflow-x:auto;"></pre>
+                <hr style="border-color:#333; margin:15px 0;">
+                <table class="score-table">
+                    <tr><th>正確</th><th>複雜</th><th>實用</th><th>代碼</th><th>可讀</th></tr>
+                    <tr>
+                        <td><input type="number" id="hr-s1" min="1" max="5" value="3"></td>
+                        <td><input type="number" id="hr-s2" min="1" max="5" value="3"></td>
+                        <td><input type="number" id="hr-s3" min="1" max="5" value="3"></td>
+                        <td><input type="number" id="hr-s4" min="1" max="5" value="3"></td>
+                        <td><input type="number" id="hr-s5" min="1" max="5" value="3"></td>
+                    </tr>
+                </table>
+                <textarea id="hr-comment" style="margin-top:10px; height:60px;" placeholder="評語..."></textarea>
+                <button class="btn-action" onclick="submitHumanReview()">📤 送出評分</button>
+            </div>
+        </div>
+
+        <!-- AI 評我區 -->
+        <div id="phase-ai-review" class="content-area">
+            <h3>🤖 AI 評分你的題目</h3>
+            <button class="btn-action" onclick="triggerAIReview()">啟動 AI 評分</button>
+            <div id="ai-result" style="display:none; margin-top:15px;">
+                <table class="score-table">
+                    <tr><th>向度</th><th>得分</th><th>AI 評語</th></tr>
+                    <tr><td>題目正確</td><td id="ai-s1">-</td><td rowspan="5" id="ai-comment-cell" class="comment-cell"></td></tr>
+                    <tr><td>複雜度</td><td id="ai-s2">-</td></tr>
+                    <tr><td>實用性</td><td id="ai-s3">-</td></tr>
+                    <tr><td>代碼正確</td><td id="ai-s4">-</td></tr>
+                    <tr><td>可讀性</td><td id="ai-s5">-</td></tr>
+                </table>
+                <br><button class="btn-action" onclick="switchPhase('reflection')">前往反思 ➡</button>
+            </div>
+        </div>
+
+        <!-- 反思區 -->
+        <div id="phase-reflection" class="content-area">
+            <h3>🤔 學習反思</h3>
+            <textarea id="rf-content" style="height:150px;"></textarea>
+            <button class="btn-action" onclick="submitAll()">✅ 提交所有成果</button>
+        </div>
+
+        <!-- 聊天室 -->
+        <div id="chat-panel">
+            <div id="chat-msgs"></div>
+            <div style="display:flex; gap:10px;">
+                <input id="chat-input" placeholder="輸入訊息..." onkeypress="if(event.key==='Enter') sendChat()">
+                <button class="btn-action" onclick="sendChat()">發送</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 🛠️ 使用者設定區 (需求 2)
+        // ==========================================
+        
+        // 1. 這裡填入剛剛部署的 GAS 網址 (務必填寫)
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbyZ5SrOel1hASXof18ImbXLohjB9I6EZMM9ZExTtrpLXfqnH0i-WxUoRtdtT7F2YphFSw/exec"; 
+
+        // 2. 設定 AI 聊天風格 (Prompt)
+        const PROMPT_CHAT_STYLE = `
+        你是一位風趣幽默、擅長用駭客術語的程式導師。
+        請用繁體中文回答，並且回答要簡短有力 (50字以內)。
+        如果學生問程式問題，請用引導的方式，不要直接給答案。
+        但是要考量學生的學習狀況還有跟你對話的語氣，不要過渡刺激學生，要真的可以讓他理解現在的任務內容，也可以適當提供一些提示給他
+        `;
+
+        // 3. 設定 AI 在治療模式(壓力過大)時的安撫風格
+        const PROMPT_THERAPY_STYLE = `
+        使用者現在壓力指數過高 (Stress Level > 85%)，處於焦慮狀態。
+        請講一個「非常冷的工程師笑話」或者是「極度溫柔的鼓勵」來轉移他的注意力。
+        請用繁體中文。
+        `;
+
+        // ==========================================
+
+        let studentId = "";
+        let currentPhase = 'learning';
+        let isFaceLoaded = false, isPaused = false, pyodide = null;
+        let sessionData = { probTitle:"", probDesc:"", probCode:"", aiScores:[], aiComment:"", reflection:"" };
+        let currentPeerProblemTitle = "";
+        let stressScore = 0, tabSwitchCount = 0, faceMissingDuration = 0, learningStartTime = 0;
+        let mouseDist = 0, lastMouseX = 0, lastMouseY = 0, backspaceCount = 0, lastEmotion = "";
+
+        function loginSystem() {
+            const id = document.getElementById('student-id-input').value.trim();
+            if(!id) return alert("請輸入學號");
+            studentId = id;
+            document.getElementById('display-student-id').innerText = "學號: " + id;
+            document.getElementById('login-overlay').style.display = 'none';
+            init();
+        }
+
+        async function init() {
+            log('SYS', '系統啟動');
+            const MODEL_URL = 'https://justadudewhohacks.github.io/face-api.js/models';
+            await Promise.all([
+                faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+                faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL)
+            ]);
+            isFaceLoaded = true;
+            
+            const video = document.getElementById('video');
+            const stream = await navigator.mediaDevices.getUserMedia({ video: {} });
+            video.srcObject = stream;
+            video.addEventListener('play', () => setInterval(monitorLoop, 1000));
+            
+            try { 
+                pyodide = await loadPyodide(); 
+                log('SYS','Python Ready'); 
+            } catch(e){ log('ERR','Python Fail'); }
+
+            document.addEventListener('mousemove', (e) => {
+                if(lastMouseX !== 0) mouseDist += Math.sqrt(Math.pow(e.clientX - lastMouseX, 2) + Math.pow(e.clientY - lastMouseY, 2));
+                lastMouseX = e.clientX; lastMouseY = e.clientY;
+            });
+            document.addEventListener('keydown', (e) => {
+                if(e.key === 'Backspace') backspaceCount++;
+            });
+
+            setInterval(() => { tabSwitchCount = 0; }, 5000); 
+            typeWriterMsg('ai', `你好，我是你的 AI 夥伴。請開始學習。`);
+            learningStartTime = Date.now();
+        }
+
+        async function monitorLoop() {
+            if(isPaused) return;
+            let emoDelta = 0, actDelta = 0, status = "正常", statusClass = "val";
+
+            if(isFaceLoaded) {
+                const video = document.getElementById('video');
+                const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions()).withFaceExpressions();
+                if(detections.length > 0) {
+                    faceMissingDuration = 0;
+                    document.getElementById('face-lock-overlay').style.display = 'none';
+                    const ex = detections[0].expressions;
+                    const top = Object.entries(ex).sort((a,b) => b[1]-a[1])[0][0];
+                    document.getElementById('emo-val').innerText = top;
+                    if (top !== lastEmotion) { log('EM', `Emotion: ${top}`); lastEmotion = top; }
+                    if(['sad', 'angry', 'fearful'].includes(top)) emoDelta += 5;
+                } else {
+                    faceMissingDuration++;
+                    document.getElementById('emo-val').innerText = "訊號遺失";
+                    if(faceMissingDuration > 3) document.getElementById('face-lock-overlay').style.display = 'flex';
+                }
+            }
+
+            if(mouseDist > 4000) { actDelta += 10; status = "滑鼠焦慮"; statusClass = "val bad"; log('ACT', `Mouse Jitter (${Math.round(mouseDist)})`); }
+            else if(backspaceCount > 10) { actDelta += 10; status = "鍵盤焦慮"; statusClass = "val bad"; log('ACT', `Keyboard Rage (${backspaceCount})`); }
+            else if(tabSwitchCount > 4) { actDelta += 10; status = "頻繁切換"; statusClass = "val warn"; log('ACT', 'Frequent Tab Switching'); }
+
+            mouseDist = 0; backspaceCount = 0;
+            document.getElementById('act-val').innerText = status;
+            document.getElementById('act-val').className = statusClass;
+
+            let totalDelta = emoDelta + actDelta;
+            if(totalDelta > 0) stressScore += totalDelta; else stressScore = Math.max(0, stressScore - 2);
+            updateStressBar();
+        }
+
+        function updateStressBar() {
+            stressScore = Math.min(100, stressScore);
+            const bar = document.getElementById('stress-bar');
+            bar.style.width = stressScore + "%";
+            if(stressScore > 85) { bar.style.background = "red"; triggerTherapy(); }
+            else if(stressScore > 50) bar.style.background = "orange";
+            else bar.style.background = "#00ff9d";
+        }
+
+        async function runPython() {
+            const code = document.getElementById('code-editor').value;
+            const outputBox = document.getElementById('output');
+            outputBox.innerText = ">>> Executing...\n";
+            if (!pyodide) { outputBox.innerText += "Python loading...\n"; return; }
+            try {
+                pyodide.setStdout({ batched: (msg) => { outputBox.innerText += msg + "\n"; } });
+                await pyodide.runPythonAsync(code);
+            } catch (err) { outputBox.innerText += "Error:\n" + err; }
+        }
+
+        // 代理呼叫 Gemini (需求 3: Key 不在外露)
+        async function callGemini(userText, systemPrompt) {
+            if(!GAS_URL.startsWith("http")) return "API URL Error";
+            const fullPrompt = systemPrompt + "\n\n使用者說：" + userText;
+            
+            try {
+                const res = await fetch(GAS_URL, {
+                    method: 'POST', mode: 'cors', // 這裡用 cors 因為我們要讀取回傳值
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // 避免 OPTIONS 預檢失敗
+                    body: JSON.stringify({ type: 'CALL_GEMINI', prompt: fullPrompt })
+                });
+                const json = await res.json();
+                return json.text || "AI 無回應";
+            } catch(e) { 
+                console.error(e);
+                return "連線錯誤 (請檢查 Apps Script 部署)"; 
+            }
+        }
+
+        async function sendChat() {
+            const v = document.getElementById('chat-input').value;
+            if(!v) return;
+            const box = document.getElementById('chat-msgs');
+            const div = document.createElement('div'); div.className="msg user"; div.innerText=v;
+            box.appendChild(div); box.scrollTop=box.scrollHeight;
+            document.getElementById('chat-input').value="";
+            
+            // 記錄互動 (需求 1: Log 只記動作)
+            log('CHAT', 'Interaction with AI'); 
+
+            // 呼叫後端 API (需求 2: 使用設定好的 Prompt)
+            const r = await callGemini(v, PROMPT_CHAT_STYLE);
+            typeWriterMsg('ai', r);
+
+            // 記錄完整對話 (需求 1: 完整內容存到 CHAT_LOG)
+            sendToGAS({ type: 'CHAT_LOG', studentId, userMsg: v, aiMsg: r });
+        }
+
+        async function triggerTherapy() {
+            if(isPaused) return; isPaused = true;
+            document.getElementById('therapy-overlay').style.display='flex';
+            
+            // 需求 2: 使用設定好的 Therapy Prompt
+            const r = await callGemini("System Alert: User Stress High", PROMPT_THERAPY_STYLE);
+            
+            const txt = document.getElementById('therapy-text');
+            txt.innerText = "";
+            let i = 0;
+            const t = setInterval(()=>{
+                txt.innerText += r.charAt(i++);
+                if(i>=r.length) { clearInterval(t); document.getElementById('btn-resume').style.opacity='1'; }
+            }, 30);
+        }
+
+        // 其他功能 (維持原樣)
+        function switchPhase(phase) {
+            tabSwitchCount++; currentPhase = phase;
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.content-area').forEach(c => c.classList.remove('active'));
+            const list = ['learning', 'posing', 'human-review', 'ai-review', 'reflection'];
+            const idx = list.indexOf(phase);
+            document.querySelectorAll('.tab-btn')[idx].classList.add('active');
+            document.querySelectorAll('.content-area')[idx].classList.add('active');
+            log('NAV', phase);
+        }
+        function finishLearning() {
+            const sec = (Date.now() - learningStartTime)/1000;
+            if(sec < 5) { stressScore += 20; typeWriterMsg('ai', '讀太快了！請專心。'); return; }
+            log('LN','完成'); switchPhase('posing');
+        }
+        function finishPosing() {
+            const t = document.getElementById('pp-title').value;
+            const c = document.getElementById('code-editor').value;
+            if(!t || !c) return alert("請填寫");
+            sessionData.probTitle = t; sessionData.probDesc = document.getElementById('pp-desc').value; sessionData.probCode = c;
+            log('PP','暫存'); switchPhase('human-review');
+        }
+        async function loadPeerProblem() {
+            const btn = document.querySelector('#phase-human-review button');
+            btn.innerText = "連線中..."; btn.disabled = true;
+            try {
+                const res = await fetch(`${GAS_URL}?studentId=${studentId}&t=${Date.now()}`);
+                const json = await res.json();
+                if(json.status === 'success') {
+                    const p = json.problem;
+                    document.getElementById('hr-title').innerText = p.title;
+                    document.getElementById('hr-desc').innerText = p.desc;
+                    document.getElementById('hr-code').innerText = p.code;
+                    currentPeerProblemTitle = p.title;
+                    document.getElementById('human-review-area').style.display = 'block';
+                    if(json.note) alert(json.note); 
+                } else { alert(json.message); }
+            } catch(e) { alert("連線失敗"); }
+            btn.innerText = "📥 載入同儕挑戰"; btn.disabled = false;
+        }
+        async function submitHumanReview() {
+            const s = [1,2,3,4,5].map(i=>document.getElementById(`hr-s${i}`).value);
+            const c = document.getElementById('hr-comment').value;
+            if(!c) return alert("請寫評語");
+            await sendToGAS({ type:'HUMAN_REVIEW', studentId, targetTitle:currentPeerProblemTitle, scores:s, comment:c });
+            alert("評分已送出"); document.getElementById('human-review-area').style.display='none'; switchPhase('ai-review');
+        }
+        async function triggerAIReview() {
+            document.getElementById('ai-result').style.display='block';
+            document.getElementById('ai-comment-cell').innerText = "AI 分析中...";
+            const prompt = `評分程式題。題目:${sessionData.probTitle},代碼:${sessionData.probCode}。請回傳JSON:{ "scores":[4,3,4,4,5], "comment":"評語" }。`;
+            const r = await callGemini(prompt, "你是一個嚴格的代碼評審員。請只回傳 JSON 格式。");
+            try {
+                const json = JSON.parse(extractJSON(r));
+                sessionData.aiScores = json.scores; sessionData.aiComment = json.comment;
+                for(let i=0; i<5; i++) document.getElementById(`ai-s${i+1}`).innerText = json.scores[i];
+                document.getElementById('ai-comment-cell').innerText = "";
+                typeWriterText(document.getElementById('ai-comment-cell'), json.comment);
+            } catch(e) { document.getElementById('ai-comment-cell').innerText = "AI 解析錯誤: " + r; }
+        }
+        async function submitAll() {
+            const r = document.getElementById('rf-content').value;
+            if(!r) return alert("請寫反思");
+            sessionData.reflection = r;
+            await sendToGAS({ type:'FULL_RECORD', studentId, ...sessionData });
+            alert("資料上傳成功！");
+        }
+        function typeWriterMsg(role, text) {
+            const box = document.getElementById('chat-msgs');
+            const div = document.createElement('div'); div.className = `msg ${role} typing-cursor`;
+            box.appendChild(div); box.scrollTop = box.scrollHeight;
+            let i = 0;
+            const t = setInterval(()=>{
+                div.innerText += text.charAt(i++);
+                box.scrollTop = box.scrollHeight;
+                if(i>=text.length){ clearInterval(t); div.classList.remove('typing-cursor'); }
+            }, 30);
+        }
+        function typeWriterText(el, text) {
+            let i = 0;
+            const t = setInterval(()=>{ el.innerText += text.charAt(i++); if(i>=text.length) clearInterval(t); }, 20);
+        }
+        function extractJSON(str) { const s = str.indexOf('{'); const e = str.lastIndexOf('}'); return (s!==-1 && e!==-1) ? str.substring(s, e+1) : "{}"; }
+        async function sendToGAS(pl) { if(!GAS_URL.startsWith("http")) return; await fetch(GAS_URL, { method:'POST', mode:'no-cors', headers:{'Content-Type':'application/json'}, body:JSON.stringify(pl) }); }
+        function log(type, detail) {
+            const box = document.getElementById('log-box');
+            const div = document.createElement('div'); div.className='log-entry';
+            div.innerText=`[${new Date().toLocaleTimeString()}] ${type}: ${detail}`;
+            box.appendChild(div); box.scrollTop=box.scrollHeight;
+            if(type !== 'ACT' && type !== 'CHAT') sendToGAS({ type:'LOG', studentId, action:type, detail });
+            // CHAT 已經由 sendChat 函數獨立發送，所以這裡排除
+            if(type === 'CHAT') sendToGAS({ type:'LOG', studentId, action:type, detail:'User interacted with AI' }); 
+        }
+        function stopTherapy() { document.getElementById('therapy-overlay').style.display='none'; stressScore=40; isPaused=false; }
+    </script>
+</body>
+</html>
